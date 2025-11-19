@@ -1,10 +1,55 @@
 #!/bin/bash
 
-DEV="$1"
-if [ -z "$DEV" ]; then
-    echo "Usage: $0 /dev/sdX"
+PS4='${LINENO}: '
+
+
+logfile=/tmp/${script}.log
+
+script=$(basename "${BASH_SOURCE[0]}")
+
+usage() {
+    echo "Usage: $script /dev/sdX -c <size>"
+    echo "  -c <size>    Chunk size (64/128/512/1024)"
     exit 1
-fi
+}
+
+# Allowed sizes for quick validation
+VALID_SIZES="64 128 512 1024"
+
+# Parse arguments
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        -h|--help)
+            usage
+            ;;
+        -c)
+            [[ -z "$2" ]] && echo "Error: -c requires a size argument" && usage
+            case " $VALID_SIZES " in
+                *" $2 "*) CHUNK_SIZE="$2" ;;
+                *) echo "Error: Invalid chunk size '$2'"; usage ;;
+            esac
+            shift 2
+            ;;
+        *)
+            # Positional arg -> must be block device
+            if [[ -b "$1" ]]; then
+                DEV="$1"
+            else
+                echo "Error: '$1' is not a valid block device"
+                usage
+            fi
+            shift
+            ;;
+    esac
+done
+
+# Optional: sanity check required args
+[[ -z "$DEV" ]] && echo "Error: Missing device" && usage
+[[ -z "$CHUNK_SIZE" ]] && echo "Error: Missing required -c <size>" && usage
+
+echo "Device: $DEV"
+echo "Chunk size: $CHUNK_SIZE"
+
 
 # ----------------------------
 #   Start Timer
@@ -16,7 +61,8 @@ START_TIME=$(date +%s)
 # ----------------------------
 
 SECTOR_SIZE=512
-CHUNK_SECTORS=$(( 64 * 1024 * 1024 / 512 ))   # 64 MiB per scan step
+CHUNK_SIZE=512
+CHUNK_SECTORS=$(( $CHUNK_SIZE * 1024 * 1024 / 512 ))   # $CHUNK_SIZE MiB per scan step
 TOTAL_SECTORS=$(blockdev --getsz "$DEV")
 TOTAL_BYTES=$(blockdev --getsize64 "$DEV")
 
@@ -27,7 +73,7 @@ echo " Device          : $DEV"
 echo " Logical Sector  : $SECTOR_SIZE bytes"
 echo " Total Sectors   : $TOTAL_SECTORS"
 echo " Disk Size GiB   : $TOTAL_GIB GiB"
-echo " Scan Chunk Size : 64 MiB ($CHUNK_SECTORS sectors)"
+echo " Scan Chunk Size : $CHUNK_SIZE MiB ($CHUNK_SECTORS sectors)"
 echo "===================================================="
 echo
 
@@ -52,7 +98,7 @@ probe_single() {
 #   Phase 1: Coarse Scan
 # ----------------------------
 
-echo "Phase 1: Coarse scan (64 MiB steps)..."
+echo "Phase 1: Coarse scan ($CHUNK_SIZE MiB steps)..."
 pos=0
 while (( pos + CHUNK_SECTORS <= TOTAL_SECTORS )); do
     if probe_range $pos $CHUNK_SECTORS; then
